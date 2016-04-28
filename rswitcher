@@ -1,0 +1,188 @@
+#!/bin/bash
+
+# TODO create this vertically (might be bad performance)
+
+# orientation, vertical not implemented
+HORIZONTAL=true
+# title color
+COLOR_TITLE=2
+# sticky app color
+COLOR_STICKY=5
+# untitled windows color
+COLOR_UNTITLED=4
+# cursor color
+COLOR_CURSOR=14
+# hide untitled windows
+HIDE_UNTITLED=false
+# hide sticky windows from the list
+HIDE_STICKY=false
+# permit raise sticky windows (weird behavior on evilwm)
+PERMIT_RAISE_STICKY=true
+# hide entries with "rswitcher" from the list
+HIDE_RSWITCHER=true
+
+# =====
+
+# get ewmh info
+mapfile -t desks < <(wmctrl -d)
+mapfile -t apps < <(wmctrl -l)
+
+# determine length per desktop
+width=`expr $(tput cols) / ${#desks[@]}`
+height=$(tput lines)
+if [ $width -lt 15 ]; then
+	echo "Term width too small, outta here"
+	exit
+fi
+# text length
+tl=$width
+(( tl -= 2 ))
+
+# prepare output
+clear
+
+# vars for current active desktop & map desknumber to position
+currentdesk=-1
+declare -a deskpos
+
+# var to keep track of amount of apps per desk
+declare -a appc
+
+# var to save app ids
+declare -a appid
+
+# print the desk titles, meanwhile determine current active desktop
+# meanwhile also map the desktop numbers to the desktop position (eg if you have desktops numbered 1,2,8 -> 0,1,2)
+tput setaf $COLOR_TITLE
+x=1
+currentdesk=-1
+ctr=0
+for ix in "${desks[@]}"
+do
+	deskid=$(awk '{print $1}'<<<"$ix")
+
+	deskpos[$deskid]=$ctr
+	appc[$ctr]=0
+	appid[$ctrl]=""
+
+	tput cup 0 $x
+	echo "desk $ctr"
+	(( x += width ))
+	(( ctr++ ))
+
+	if grep -q "*"<<<"$ix"
+	then
+		currentdesk=$deskid
+	fi
+done
+tput sgr0
+
+# save the amount of desktops
+desktopamount=`expr $ctr - 1`
+
+# now print the apps
+resetcol=0
+for ix in "${apps[@]}"
+do
+	appdesk=$(awk '{print $2}'<<<"$ix")
+	if [ $appdesk -eq -1 ]
+	then
+		if [ "$HIDE_STICKY" = true ]
+		then
+			continue
+		fi
+		appdesk=$currentdesk
+		tput setaf $COLOR_STICKY
+		resetcol=1
+	elif [ $resetcol -eq 1 ]
+	then
+		tput sgr0
+	fi
+
+	# get title
+	title=$(echo $ix | sed -r 's/^(\S+\s+){3}//')
+
+	# check untitled window, rswitcher window
+	wc=$(echo $ix | wc -w)
+	if [ $wc -eq 3 ]
+	then
+		if [ "$HIDE_UNTITLED" = true ]
+		then
+			continue
+		fi
+		tput setaf $COLOR_UNTITLED
+		resetcol=1
+		title="<untitled>"
+	elif [ "$HIDE_RSWITCHER" = true ] && [[ "$title" = "rswitcher" ]]
+	then
+		continue
+	fi
+
+	showdesk=${deskpos[$appdesk]}
+	(( appc[showdesk]++ ))
+	x=1
+	(( x += width * showdesk ))
+	tput cup ${appc[$showdesk]} $x
+	echo "${title:0:$tl}"
+
+	id=$(awk '{print $1}'<<<"$ix")
+	appid[$showdesk]="${appid[$showdesk]}$id "
+done
+
+# now we start moving around
+
+# vars for currentdesktop, currentapp
+curd=${deskpos[$currentdesk]}
+cura=0
+
+while :
+do
+	# position the cursor
+	x=$curd
+	(( x *= width ))
+	tput cup $cura $x
+	tput sc
+	# echo the cursor
+	#tput setaf $COLOR_CURSOR
+	echo "#"
+	#tput sgr0
+	tput rc
+
+	# read a keypress
+	read -s -n1 key
+
+	#hide the previous cursor
+	tput rc
+	echo " "
+
+	# handle the actual input
+	case $key in
+		"j")
+			((cura++));;
+		"k")
+			((cura--));;
+		"h")
+			((curd--));;
+		"l")
+			((curd++));;
+		"")
+			if [ $cura -eq 0 ]
+			then
+				wmctrl -s $curd
+			else
+				winid=$(echo "${appid[$curd]}" | awk "{print \$$cura}")
+				wmctrl -i -a $winid
+			fi
+			exit;;
+		*)
+			exit;;
+	esac
+
+	# limit the values
+	[ $cura -lt 0 ] && cura=${appc[$curd]}
+	[[ $cura -gt ${appc[curd]} ]] && cura=0
+	[ $curd -lt 0 ] && curd=$desktopamount
+	[ $curd -gt $desktopamount ] && curd=0
+
+done
+
